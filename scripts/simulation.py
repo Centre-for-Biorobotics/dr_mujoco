@@ -6,6 +6,8 @@ A ROS 2 node to bridge the MuJoCo physics simulator with ROS 2.
 import os
 import xml.etree.ElementTree as ET
 from typing import Optional
+import random 
+import math  
 
 import mujoco
 import mujoco.viewer
@@ -17,7 +19,7 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.time import Time
 from sensor_msgs.msg import Image
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, Int32 
 
 
 class MujocoRosBridge(Node):
@@ -33,12 +35,17 @@ class MujocoRosBridge(Node):
     CAMERA_SIM = 'camera_sim'
     CAMERA_SIM_HZ = 'camera_sim_hz'
     RENDERING_SIM_HZ = 'rendering_sim_hz'
+    PARAM_ENCODER_CPR = 'encoder.cpr'
+    PARAM_ENCODER_NOISY = 'encoder.noisy'
 
     # Topic Names
     ODOM_TOPIC = '/diff_cont/odom'
     IMAGE_TOPIC = '/camera1/image_raw'
     CMD_VEL_TOPIC = '/diff_cont/cmd_vel'
     BALL_POS_TOPIC = '/ball_position'
+    LEFT_ENCODER_TOPIC = '/left_encoder/ticks'
+    RIGHT_ENCODER_TOPIC = '/right_encoder/ticks'
+
 
     # Frame IDs
     ODOM_FRAME_ID = 'odom'
@@ -51,6 +58,9 @@ class MujocoRosBridge(Node):
     RIGHT_WHEEL_BODY = 'right_wheel'
     FRONT_CAMERA = 'front_camera'
     BALL_ACTUATOR = 'ball_actuator'
+    LEFT_WHEEL_JOINT = 'base_to_left_wheel'
+    RIGHT_WHEEL_JOINT = 'base_to_right_wheel'
+
 
     # Simulation Settings
     PHYSICS_LOOP_HZ = 100.0 # Hz for mj_step and odom
@@ -88,12 +98,17 @@ class MujocoRosBridge(Node):
         self.declare_parameter(self.CAMERA_SIM, False)
         self.declare_parameter(self.RENDERING_SIM_HZ, self.RENDERING_HZ)
         self.declare_parameter(self.CAMERA_SIM_HZ, self.CAMERA_HZ)
+        self.declare_parameter(self.PARAM_ENCODER_CPR, 508.8)
+        self.declare_parameter(self.PARAM_ENCODER_NOISY, True)
+
 
         self.world_path = self.get_parameter(self.PARAM_WORLD_PATH).get_parameter_value().string_value
         self.robot_path = self.get_parameter(self.PARAM_ROBOT_PATH).get_parameter_value().string_value
         self.camera_sim = self.get_parameter(self.CAMERA_SIM).get_parameter_value().bool_value
         self.rendering_hz = self.get_parameter(self.RENDERING_SIM_HZ).get_parameter_value().double_value
         self.camera_hz = self.get_parameter(self.CAMERA_SIM_HZ).get_parameter_value().double_value
+        self.encoder_cpr = self.get_parameter(self.PARAM_ENCODER_CPR).get_parameter_value().double_value
+        self.encoder_noisy = self.get_parameter(self.PARAM_ENCODER_NOISY).get_parameter_value().bool_value
 
 
         self.get_logger().info(f"World Path: {self.world_path}")
@@ -102,6 +117,9 @@ class MujocoRosBridge(Node):
         if self.camera_sim:
             self.get_logger().info(f"Camera Simulating Hz: {self.camera_hz}")
         self.get_logger().info(f"Rendering Hz: {self.rendering_hz}")
+        self.get_logger().info(f"Encoder CPR: {self.encoder_cpr}")
+        self.get_logger().info(f"Encoder Noisy: {self.encoder_noisy}")
+
 
         if not self.world_path or not self.robot_path:
             raise ValueError("Parameters 'world_path' and 'robot_path' must be set.")
@@ -132,9 +150,21 @@ class MujocoRosBridge(Node):
             right_pos = self.model.body_pos[right_wheel_body_id]
             self.wheel_base = np.linalg.norm(left_pos - right_pos)
 
+            left_wheel_joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, self.LEFT_WHEEL_JOINT)
+            right_wheel_joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, self.RIGHT_WHEEL_JOINT)
+
+            self.left_wheel_qpos_id = self.model.jnt_qposadr[left_wheel_joint_id]
+            self.right_wheel_qpos_id = self.model.jnt_qposadr[right_wheel_joint_id]
+
             self.get_logger().info(f"Loaded parameters from XML: Wheel Radius={self.wheel_radius:.4f}, Wheel Base={self.wheel_base:.4f}")
+            self.get_logger().info(f"QPos index for left wheel: {self.left_wheel_qpos_id}")
+            self.get_logger().info(f"QPos index for right wheel: {self.right_wheel_qpos_id}")
+
         except KeyError as e:
             raise RuntimeError(f"Could not find model component: {e}. Check your XML file.") from e
+        except ValueError as e:
+            raise RuntimeError(f"Could not find joint for encoder: {e}. Check your robot XML file.") from e
+
 
     def _setup_mujoco_simulation(self):
         """Sets up the MuJoCo viewer and renderer."""
@@ -151,6 +181,10 @@ class MujocoRosBridge(Node):
         self.image_pub = self.create_publisher(Image, self.IMAGE_TOPIC, 10)
         self.cmd_vel_sub = self.create_subscription(Twist, self.CMD_VEL_TOPIC, self.cmd_vel_callback, 10)
         self.ball_pos_sub = self.create_subscription(Float32, self.BALL_POS_TOPIC, self.move_ball_callback, 10)
+
+        # Encoder publishers
+        self.left_encoder_pub = self.create_publisher(Int32, self.LEFT_ENCODER_TOPIC, 10)
+        self.right_encoder_pub = self.create_publisher(Int32, self.RIGHT_ENCODER_TOPIC, 10)
 
         self.bridge = CvBridge()
         
@@ -175,51 +209,39 @@ class MujocoRosBridge(Node):
 
     @staticmethod
     def _create_combined_xml_string(world_path: str, robot_path: str) -> str:
-        """Merges two MuJoCo XML files into a single string."""
         world_tree = ET.parse(world_path)
         robot_tree = ET.parse(robot_path)
         world_root = world_tree.getroot()
         robot_root = robot_tree.getroot()
-
-        # Merge the worldbody section
         world_body = world_root.find('worldbody')
         robot_body = robot_root.find('worldbody')
         if world_body is not None and robot_body is not None:
             for body in list(robot_body):
                 world_body.append(body)
-
-        # Merge other sections
         sections_to_merge = ['asset', 'visual', 'actuator', 'sensor', 'tendon', 'keyframe']
         for section in sections_to_merge:
             world_section = world_root.find(section)
             robot_section = robot_root.find(section)
             if robot_section is not None:
                 if world_section is None:
-                    # If the section does not exist in world, add it
                     world_root.append(robot_section)
                 else:
                     for element in list(robot_section):
                         world_section.append(element)
-        
         return ET.tostring(world_root, encoding='unicode')
 
+
     def cmd_vel_callback(self, msg: Twist):
-        """Subscribes to /cmd_vel and converts it to motor control commands."""
         linear_x = msg.linear.x
         angular_z = msg.angular.z
-        
-        # Differential drive inverse kinematics
         v_right = -linear_x - (self.wheel_base / 2.0) * angular_z
         v_left = linear_x - (self.wheel_base / 2.0) * angular_z
-
         omega_right = v_right / self.wheel_radius
         omega_left = v_left / self.wheel_radius
-
-        self.data.ctrl[0]  = omega_left  # Assuming actuator 0 is left
-        self.data.ctrl[1] = omega_right # Assuming actuator 1 is right
+        self.data.ctrl[0]  = omega_left
+        self.data.ctrl[1] = omega_right
 
     def move_ball_callback(self, msg: Float32):
-        """Controls the position of the ball."""
         if self.ball_actuator_id != -1:
             self.data.ctrl[self.ball_actuator_id] = msg.data
 
@@ -238,46 +260,39 @@ class MujocoRosBridge(Node):
 
         now = self.get_clock().now().to_msg()
         self._publish_odometry(now)
+        self._publish_encoder_ticks() ### ADDED ### Call encoder publisher
+
 
     def rendering_timer_callback(self):
-        """Callback for rendering GUI and publishing camera images."""
         if not rclpy.ok() or not self.viewer.is_running():
             return
-        
-        # Sync the passive viewer
         self.viewer.sync()
 
+
     def camera_timer_callback(self):
-        """Callback for publishing camera images at a lower frequency."""
         if not rclpy.ok() or not self.viewer.is_running():
             return
-        
         now = self.get_clock().now().to_msg()
         self._publish_camera_image(now)
 
+
     def _publish_odometry(self, stamp: Time):
-        """Publishes odometry information."""
         odom_msg = Odometry()
         odom_msg.header.stamp = stamp
         odom_msg.header.frame_id = self.ODOM_FRAME_ID
         odom_msg.child_frame_id = self.BASE_LINK_FRAME_ID
-
-        # Pose: position and orientation (MuJoCo quaternion is [w, x, y, z])
         odom_msg.pose.pose.position = Point(x=self.data.qpos[0], y=self.data.qpos[1], z=self.data.qpos[2])
         odom_msg.pose.pose.orientation = Quaternion(w=self.data.qpos[3], x=self.data.qpos[4], y=self.data.qpos[5], z=self.data.qpos[6])
-        
-        # Twist: linear and angular velocities
         odom_msg.twist.twist.linear = Vector3(x=self.data.qvel[0], y=self.data.qvel[1], z=self.data.qvel[2])
         odom_msg.twist.twist.angular = Vector3(x=self.data.qvel[3], y=self.data.qvel[4], z=self.data.qvel[5])
-        
         self.odom_pub.publish(odom_msg)
 
+
     def _publish_camera_image(self, stamp: Time):
-        """Renders and publishes the camera image."""
         try:
             self.renderer.update_scene(self.data, camera=self.FRONT_CAMERA)
             pixels = self.renderer.render()
-            bgr_image = pixels[..., ::-1]  # RGB to BGR
+            bgr_image = pixels[..., ::-1]
             image_msg = self.bridge.cv2_to_imgmsg(bgr_image, "bgr8")
             image_msg.header.stamp = stamp
             image_msg.header.frame_id = self.CAMERA_FRAME_ID
@@ -285,8 +300,39 @@ class MujocoRosBridge(Node):
         except Exception as e:
             self.get_logger().warn(f"Could not publish camera image: {e}")
 
+    def _publish_encoder_ticks(self):
+            """Calculates and publishes absolute encoder ticks from joint states."""
+            cpr_int = int(self.encoder_cpr)
+            if cpr_int <= 0:
+                self.get_logger().warn_once("Encoder CPR is not a positive value, cannot calculate ticks.")
+                return
+
+            left_wheel_angle = self.data.qpos[self.left_wheel_qpos_id]
+            right_wheel_angle = self.data.qpos[self.right_wheel_qpos_id]
+
+            cumulative_left_ticks = (left_wheel_angle / (2 * math.pi)) * self.encoder_cpr
+            cumulative_right_ticks = (right_wheel_angle / (2 * math.pi)) * self.encoder_cpr
+
+            if self.encoder_noisy:
+                cumulative_left_ticks = random.normalvariate(cumulative_left_ticks, 0.5)
+                cumulative_right_ticks = random.normalvariate(cumulative_right_ticks, 0.5)
+
+            absolute_left_ticks = int(cumulative_left_ticks) % cpr_int
+            
+            initial_offset = 506
+            absolute_right_ticks = (initial_offset - int(cumulative_right_ticks)) % cpr_int
+            
+            # Create and publish messages
+            left_msg = Int32()
+            left_msg.data = absolute_left_ticks
+            self.left_encoder_pub.publish(left_msg)
+
+            right_msg = Int32()
+            right_msg.data = absolute_right_ticks
+            self.right_encoder_pub.publish(right_msg)
+
+
     def cleanup(self):
-        """Cleans up node resources."""
         self.get_logger().info("Executing cleanup...")
         if hasattr(self, 'renderer') and self.renderer:
             self.renderer.close()
@@ -295,12 +341,9 @@ class MujocoRosBridge(Node):
 
 
 def main(args: Optional[list] = None):
-    """Main function."""
     rclpy.init(args=args)
     bridge_node = MujocoRosBridge()
-
     try:
-        # If rclpy.ok() is false, spin() will return immediately
         if rclpy.ok():
             rclpy.spin(bridge_node)
     except KeyboardInterrupt:
