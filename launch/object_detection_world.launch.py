@@ -23,6 +23,12 @@ def generate_launch_description():
         description='Path to the MuJoCo XML robot file'
     )
 
+    camera_hz_arg = DeclareLaunchArgument(
+        'camera_hz',
+        default_value='10.0',
+        description='Camera update frequency in Hz'
+    )
+
     mujoco_ros_bridge_node = Node(
         package='dr_mujoco',
         executable='simulation.py',
@@ -30,7 +36,9 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'world_path': LaunchConfiguration('world'),
-            'robot_path': LaunchConfiguration('robot')
+            'robot_path': LaunchConfiguration('robot'),
+            'camera_hz': LaunchConfiguration('camera_hz'),
+            'camera_sim': True
         }]
     )
 
@@ -44,6 +52,7 @@ def generate_launch_description():
     return LaunchDescription([
         world_arg,
         robot_arg,
+        camera_hz_arg,
         mujoco_ros_bridge_node,
         ball_mover_node
     ])

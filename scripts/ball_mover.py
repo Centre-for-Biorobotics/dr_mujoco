@@ -8,8 +8,8 @@ class BallMover(Node):
     def __init__(self):
         super().__init__('ball_mover')
         self.publisher = self.create_publisher(Float32, 'ball_position', 10)
-        self.amplitude = 1.5 
-        self.frequency = 0.25
+        self.amplitude = 1.0
+        self.frequency = 0.10
         self.timer = self.create_timer(0.05, self.timer_callback)
         self.count = 0
         self.max_count = 1 / self.frequency / 0.05
