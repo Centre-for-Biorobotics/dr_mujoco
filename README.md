@@ -1,5 +1,5 @@
 # DRmujoco
-ROS2-Mujoco simulator for differential robot.
+ROS2-Mujoco simulator for differential drive robot.
 
 This repository should be excutable as one independent simulator. Any other components put on different repository. 
 
@@ -15,4 +15,4 @@ Ref. https://mujoco.readthedocs.io/en/stable/modeling.html
 In gazebo, we were using plugin for low-layer wheel control implementation. In mujoco, we implement low-level controller as scratch (typical wheel-size and gap model base) but dynamics are calculated by mujoco physics engine.
 
 **CMake**
-After ubuntu 24.04 and ROS2 Jazzy, setup.py is not recommended option. The ros2 package is managed with CMake now. 
+Possibilities of some components switching to Cpp implementation due to the calculation speed, CMake is used for build system.
