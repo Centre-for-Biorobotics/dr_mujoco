@@ -42,6 +42,7 @@ class MujocoRosBridge(Node):
     ODOM_TOPIC = '/diff_cont/odom'
     IMAGE_TOPIC = '/camera1/image_raw'
     CMD_VEL_TOPIC = '/diff_cont/cmd_vel'
+    DIRECT_VEL_UPDATE_TOPIC = '/move/cmd_vel'
     BALL_POS_TOPIC = '/ball_position'
     LEFT_ENCODER_TOPIC = '/left_encoder/ticks'
     RIGHT_ENCODER_TOPIC = '/right_encoder/ticks'
@@ -180,6 +181,7 @@ class MujocoRosBridge(Node):
         self.odom_pub = self.create_publisher(Odometry, self.ODOM_TOPIC, 10)
         self.image_pub = self.create_publisher(Image, self.IMAGE_TOPIC, 10)
         self.cmd_vel_sub = self.create_subscription(Twist, self.CMD_VEL_TOPIC, self.cmd_vel_callback, 10)
+        self.direct_vel_sub = self.create_subscription(Twist, self.DIRECT_VEL_UPDATE_TOPIC, self.direct_cmd_vel_callback, 10)
         self.ball_pos_sub = self.create_subscription(Float32, self.BALL_POS_TOPIC, self.move_ball_callback, 10)
 
         # Encoder publishers
@@ -229,6 +231,24 @@ class MujocoRosBridge(Node):
                     for element in list(robot_section):
                         world_section.append(element)
         return ET.tostring(world_root, encoding='unicode')
+
+    def direct_cmd_vel_callback(self, msg: Twist):
+        """
+        Directly sets the robot's linear and angular velocity in the world frame.
+        """
+        orientation_quat = self.data.qpos[3:7]
+
+        linear_vel_body = np.array([msg.linear.x, msg.linear.y, msg.linear.z])
+        angular_vel_body = np.array([msg.angular.x, msg.angular.y, msg.angular.z])
+
+        linear_vel_world = np.zeros(3)
+        angular_vel_world = np.zeros(3)
+
+        mujoco.mju_rotVecQuat(linear_vel_world, linear_vel_body, orientation_quat)
+        mujoco.mju_rotVecQuat(angular_vel_world, angular_vel_body, orientation_quat)
+
+        self.data.qvel[0:3] = linear_vel_world
+        self.data.qvel[3:6] = angular_vel_world
 
 
     def cmd_vel_callback(self, msg: Twist):
