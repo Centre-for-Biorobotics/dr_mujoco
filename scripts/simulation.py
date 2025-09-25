@@ -61,6 +61,8 @@ class MujocoRosBridge(Node):
     BALL_ACTUATOR = 'ball_actuator'
     LEFT_WHEEL_JOINT = 'base_to_left_wheel'
     RIGHT_WHEEL_JOINT = 'base_to_right_wheel'
+    LEFT_WHEEL_ACTUATOR = 'left_wheel_vel'
+    RIGHT_WHEEL_ACTUATOR = 'right_wheel_vel'
 
 
     # Simulation Settings
@@ -172,6 +174,21 @@ class MujocoRosBridge(Node):
         self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
         self.renderer = mujoco.Renderer(self.model, self.IMG_HEIGHT, self.IMG_WIDTH)
         self.ball_actuator_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, self.BALL_ACTUATOR)
+        # Find actuator IDs by name
+        try:
+            self.ball_actuator_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, self.BALL_ACTUATOR)
+            self.left_wheel_actuator_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, self.LEFT_WHEEL_ACTUATOR)
+            self.right_wheel_actuator_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, self.RIGHT_WHEEL_ACTUATOR)
+
+            if self.left_wheel_actuator_id == -1 or self.right_wheel_actuator_id == -1:
+                raise ValueError("Wheel actuators not found.")
+
+            self.get_logger().info(f"Found left wheel actuator with ID: {self.left_wheel_actuator_id}")
+            self.get_logger().info(f"Found right wheel actuator with ID: {self.right_wheel_actuator_id}")
+            if self.ball_actuator_id != -1:
+                self.get_logger().info(f"Found ball actuator with ID: {self.ball_actuator_id}")
+        except ValueError as e:
+            self.get_logger().warn(f"Could not find required actuators: {e}. Check actuator names in your XML and the script.")
 
         # Rendering settings
         self.renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
@@ -258,8 +275,13 @@ class MujocoRosBridge(Node):
         v_left = linear_x - (self.wheel_base / 2.0) * angular_z
         omega_right = v_right / self.wheel_radius
         omega_left = v_left / self.wheel_radius
-        self.data.ctrl[0]  = omega_left
-        self.data.ctrl[1] = omega_right
+        if self.left_wheel_actuator_id != -1:
+            self.data.ctrl[self.left_wheel_actuator_id] = omega_left
+        if self.right_wheel_actuator_id != -1:
+            self.data.ctrl[self.right_wheel_actuator_id] = omega_right
+        if self.right_wheel_actuator_id == -1 or self.left_wheel_actuator_id == -1:
+            self.get_logger().warn_once("Wheel actuators not found, cannot apply cmd_vel.")
+            self.get_logger().warn_once("Check actuator names in your XML and the script.")
 
     def move_ball_callback(self, msg: Float32):
         if self.ball_actuator_id != -1:
