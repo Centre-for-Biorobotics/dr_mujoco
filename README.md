@@ -3,6 +3,8 @@ ROS2-Mujoco simulator for differential drive robot.
 
 This repository should be excutable as one independent simulator. Any other components put on different repository. 
 
+The documentation page is here: https://hmmt.ee/dr_mujoco/
+
 ## Major update and note comparing to Gazebo ver. 
 
 **URDF syntax**
