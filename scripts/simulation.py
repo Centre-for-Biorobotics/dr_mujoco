@@ -37,6 +37,9 @@ class MujocoRosBridge(Node):
     RENDERING_SIM_HZ = 'rendering_sim_hz'
     PARAM_ENCODER_CPR = 'encoder.cpr'
     PARAM_ENCODER_NOISY = 'encoder.noisy'
+    PARAM_SHOW_FRAMES = 'show_frames'
+    PARAM_FRAMES_KIND = 'frames_kind'
+    PARAM_ROBOT_ALPHA = 'robot_alpha'
 
     # Topic Names
     ODOM_TOPIC = '/diff_cont/odom'
@@ -63,7 +66,6 @@ class MujocoRosBridge(Node):
     RIGHT_WHEEL_JOINT = 'base_to_right_wheel'
     LEFT_WHEEL_ACTUATOR = 'left_wheel_vel'
     RIGHT_WHEEL_ACTUATOR = 'right_wheel_vel'
-
 
     # Simulation Settings
     PHYSICS_LOOP_HZ = 100.0 # Hz for mj_step and odom
@@ -102,8 +104,11 @@ class MujocoRosBridge(Node):
         self.declare_parameter(self.RENDERING_SIM_HZ, self.RENDERING_HZ)
         self.declare_parameter(self.CAMERA_SIM_HZ, self.CAMERA_HZ)
         self.declare_parameter(self.PARAM_ENCODER_CPR, 508.8)
-        self.declare_parameter(self.PARAM_ENCODER_NOISY, True)
-
+        self.declare_parameter(self.PARAM_ROBOT_ALPHA, 1.0)
+        self.declare_parameter(self.PARAM_ENCODER_NOISY, True)    
+        self.declare_parameter(self.PARAM_SHOW_FRAMES, False)
+        self.declare_parameter(self.PARAM_FRAMES_KIND, 'geom')  
+        # body / geom / site / camera / light / contact / world
 
         self.world_path = self.get_parameter(self.PARAM_WORLD_PATH).get_parameter_value().string_value
         self.robot_path = self.get_parameter(self.PARAM_ROBOT_PATH).get_parameter_value().string_value
@@ -112,7 +117,9 @@ class MujocoRosBridge(Node):
         self.camera_hz = self.get_parameter(self.CAMERA_SIM_HZ).get_parameter_value().double_value
         self.encoder_cpr = self.get_parameter(self.PARAM_ENCODER_CPR).get_parameter_value().double_value
         self.encoder_noisy = self.get_parameter(self.PARAM_ENCODER_NOISY).get_parameter_value().bool_value
-
+        self.robot_alpha = self.get_parameter(self.PARAM_ROBOT_ALPHA).get_parameter_value().double_value
+        self.show_frames = self.get_parameter('show_frames').get_parameter_value().bool_value
+        self.frames_kind = self.get_parameter('frames_kind').get_parameter_value().string_value
 
         self.get_logger().info(f"World Path: {self.world_path}")
         self.get_logger().info(f"Robot Path: {self.robot_path}")
@@ -174,7 +181,32 @@ class MujocoRosBridge(Node):
         self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
         self.renderer = mujoco.Renderer(self.model, self.IMG_HEIGHT, self.IMG_WIDTH)
         self.ball_actuator_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, self.BALL_ACTUATOR)
-        # Find actuator IDs by name
+
+        if self.show_frames:
+            kind_map = {
+                'body':   mujoco.mjtFrame.mjFRAME_BODY,
+                'geom':   mujoco.mjtFrame.mjFRAME_GEOM,
+                'site':   mujoco.mjtFrame.mjFRAME_SITE,
+                'camera': mujoco.mjtFrame.mjFRAME_CAMERA,
+                'light':  mujoco.mjtFrame.mjFRAME_LIGHT,
+                'contact':mujoco.mjtFrame.mjFRAME_CONTACT,
+                'world':  mujoco.mjtFrame.mjFRAME_WORLD,
+            }
+            self.viewer.opt.frame = kind_map.get(self.frames_kind.lower(), mujoco.mjtFrame.mjFRAME_BODY)
+
+            try:
+                self.model.vis.scale.framelength = 0.05
+                self.model.vis.scale.framewidth  = 0.001
+            except AttributeError:
+                pass
+
+        if  0.0 <= self.robot_alpha <= 1.0:
+            for mid in range(self.model.nmat):
+                self.model.mat_rgba[mid, 3] = self.robot_alpha
+            for gid in range(self.model.ngeom):
+                if self.model.geom_matid[gid] < 0:
+                    self.model.geom_rgba[gid, 3] = self.robot_alpha
+
         try:
             self.ball_actuator_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, self.BALL_ACTUATOR)
             self.left_wheel_actuator_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, self.LEFT_WHEEL_ACTUATOR)
@@ -343,35 +375,33 @@ class MujocoRosBridge(Node):
             self.get_logger().warn(f"Could not publish camera image: {e}")
 
     def _publish_encoder_ticks(self):
-            """Calculates and publishes absolute encoder ticks from joint states."""
-            cpr_int = int(self.encoder_cpr)
-            if cpr_int <= 0:
-                self.get_logger().warn_once("Encoder CPR is not a positive value, cannot calculate ticks.")
-                return
+        """Calculates and publishes absolute encoder ticks from joint states."""
+        cpr_int = int(self.encoder_cpr)
+        if cpr_int <= 0:
+            self.get_logger().warn_once("Encoder CPR is not a positive value, cannot calculate ticks.")
+            return
 
-            left_wheel_angle = self.data.qpos[self.left_wheel_qpos_id]
-            right_wheel_angle = self.data.qpos[self.right_wheel_qpos_id]
+        left_wheel_angle = self.data.qpos[self.left_wheel_qpos_id]
+        right_wheel_angle = self.data.qpos[self.right_wheel_qpos_id]
 
-            cumulative_left_ticks = (left_wheel_angle / (2 * math.pi)) * self.encoder_cpr
-            cumulative_right_ticks = (right_wheel_angle / (2 * math.pi)) * self.encoder_cpr
+        cumulative_left_ticks = (left_wheel_angle / (2 * math.pi)) * self.encoder_cpr
+        cumulative_right_ticks = (right_wheel_angle / (2 * math.pi)) * self.encoder_cpr
 
-            if self.encoder_noisy:
-                cumulative_left_ticks = random.normalvariate(cumulative_left_ticks, 0.5)
-                cumulative_right_ticks = random.normalvariate(cumulative_right_ticks, 0.5)
+        if self.encoder_noisy:
+            cumulative_left_ticks = random.normalvariate(cumulative_left_ticks, 0.75)
+            cumulative_right_ticks = random.normalvariate(cumulative_right_ticks, 0.75)
 
-            absolute_left_ticks = int(cumulative_left_ticks) % cpr_int
-            
-            initial_offset = 506
-            absolute_right_ticks = (initial_offset - int(cumulative_right_ticks)) % cpr_int
-            
-            # Create and publish messages
-            left_msg = Int32()
-            left_msg.data = absolute_left_ticks
-            self.left_encoder_pub.publish(left_msg)
+        absolute_left_ticks = int(cumulative_left_ticks) % cpr_int
+        absolute_right_ticks = int(cumulative_right_ticks) % cpr_int
+        
+        # Create and publish messages
+        left_msg = Int32()
+        left_msg.data = absolute_left_ticks
+        self.left_encoder_pub.publish(left_msg)
 
-            right_msg = Int32()
-            right_msg.data = absolute_right_ticks
-            self.right_encoder_pub.publish(right_msg)
+        right_msg = Int32()
+        right_msg.data = absolute_right_ticks
+        self.right_encoder_pub.publish(right_msg)
 
 
     def cleanup(self):

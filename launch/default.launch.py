@@ -23,6 +23,18 @@ def generate_launch_description():
         description='Path to the MuJoCo XML robot file'
     )
 
+    show_frames_arg = DeclareLaunchArgument(
+        'show_frames',
+        default_value='false',
+        description='Whether to show coordinate frames in the simulation'
+    )
+
+    alpha_arg = DeclareLaunchArgument(
+        'robot_alpha',
+        default_value='1.0',
+        description='Alpha transparency for the robot model (0.0 to 1.0)'
+    )
+
     mujoco_ros_bridge_node = Node(
         package='dr_mujoco',
         executable='simulation.py',
@@ -30,12 +42,16 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'world_path': LaunchConfiguration('world'),
-            'robot_path': LaunchConfiguration('robot')
+            'robot_path': LaunchConfiguration('robot'),
+            'show_frames': LaunchConfiguration('show_frames'),
+            'robot_alpha': LaunchConfiguration('robot_alpha')
         }]
     )
 
     return LaunchDescription([
         world_arg,
         robot_arg,
+        show_frames_arg,
+        alpha_arg,
         mujoco_ros_bridge_node
     ])
