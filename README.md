@@ -1,5 +1,5 @@
 # DRmujoco
-ROS2-Mujoco simulator for differential drive robot.
+ROS2-Mujoco simulator for differential drive robot for IAS0220 at taltech.
 
 This repository should be excutable as one independent simulator. Any other components put on different repository. 
 
