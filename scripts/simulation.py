@@ -309,8 +309,8 @@ class MujocoRosBridge(Node):
         mujoco.mju_rotVecQuat(linear_vel_world, linear_vel_body, orientation_quat)
         mujoco.mju_rotVecQuat(angular_vel_world, angular_vel_body, orientation_quat)
 
-        self.data.qvel[self.ball_qvel_id:self.ball_qvel_id + 3] = linear_vel_world
-        self.data.qvel[self.ball_qvel_id + 3:self.ball_qvel_id + 6] = angular_vel_world
+        self.data.qvel[self.robot_base_qvel_id:self.robot_base_qvel_id + 3] = linear_vel_world
+        self.data.qvel[self.robot_base_qvel_id + 3:self.robot_base_qvel_id + 6] = angular_vel_world
 
 
     def cmd_vel_callback(self, msg: Twist):
