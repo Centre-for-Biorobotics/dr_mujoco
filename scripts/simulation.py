@@ -66,6 +66,8 @@ class MujocoRosBridge(Node):
     RIGHT_WHEEL_JOINT = 'base_to_right_wheel'
     LEFT_WHEEL_ACTUATOR = 'left_wheel_vel'
     RIGHT_WHEEL_ACTUATOR = 'right_wheel_vel'
+    BALL_JOINT = 'teleporting_ball_joint'
+    ROBOT_BASE_JOINT = 'my_robot'
 
     # Simulation Settings
     PHYSICS_LOOP_HZ = 100.0 # Hz for mj_step and odom
@@ -86,6 +88,7 @@ class MujocoRosBridge(Node):
             self._get_model_parameters()
             self._setup_mujoco_simulation()
             self._setup_ros_communications()
+            self.randomize_target()
         except Exception as e:
             self._handle_fatal_error(f"Failed to initialize: {e}")
             return
@@ -151,6 +154,10 @@ class MujocoRosBridge(Node):
     def _get_model_parameters(self):
         """Retrieves physical parameters of the robot from the MuJoCo model."""
         try:
+            self.robot_base_joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, self.ROBOT_BASE_JOINT)
+            self.robot_base_qpos_id = self.model.jnt_qposadr[self.robot_base_joint_id]
+            self.robot_base_qvel_id = self.model.jnt_dofadr[self.robot_base_joint_id]
+
             left_wheel_geom_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, self.LEFT_WHEEL_GEOM)
             self.wheel_radius = self.model.geom_size[left_wheel_geom_id][0]
 
@@ -166,9 +173,15 @@ class MujocoRosBridge(Node):
             self.left_wheel_qpos_id = self.model.jnt_qposadr[left_wheel_joint_id]
             self.right_wheel_qpos_id = self.model.jnt_qposadr[right_wheel_joint_id]
 
+            self.ball_joint_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, self.BALL_JOINT)
+            if self.ball_joint_id >= 0:
+                self.ball_qpos_id = self.model.jnt_qposadr[self.ball_joint_id]
+                self.ball_qvel_id = self.model.jnt_dofadr[self.ball_joint_id]
+
             self.get_logger().info(f"Loaded parameters from XML: Wheel Radius={self.wheel_radius:.4f}, Wheel Base={self.wheel_base:.4f}")
             self.get_logger().info(f"QPos index for left wheel: {self.left_wheel_qpos_id}")
             self.get_logger().info(f"QPos index for right wheel: {self.right_wheel_qpos_id}")
+            self.get_logger().info(f"Robot base qpos={self.robot_base_qpos_id}, qvel={self.robot_base_qvel_id}")
 
         except KeyError as e:
             raise RuntimeError(f"Could not find model component: {e}. Check your XML file.") from e
@@ -285,7 +298,7 @@ class MujocoRosBridge(Node):
         """
         Directly sets the robot's linear and angular velocity in the world frame.
         """
-        orientation_quat = self.data.qpos[3:7]
+        orientation_quat = self.data.qpos[self.robot_base_qpos_id + 3:self.robot_base_qpos_id + 7]
 
         linear_vel_body = np.array([msg.linear.x, msg.linear.y, msg.linear.z])
         angular_vel_body = np.array([msg.angular.x, msg.angular.y, msg.angular.z])
@@ -296,8 +309,8 @@ class MujocoRosBridge(Node):
         mujoco.mju_rotVecQuat(linear_vel_world, linear_vel_body, orientation_quat)
         mujoco.mju_rotVecQuat(angular_vel_world, angular_vel_body, orientation_quat)
 
-        self.data.qvel[0:3] = linear_vel_world
-        self.data.qvel[3:6] = angular_vel_world
+        self.data.qvel[self.ball_qvel_id:self.ball_qvel_id + 3] = linear_vel_world
+        self.data.qvel[self.ball_qvel_id + 3:self.ball_qvel_id + 6] = angular_vel_world
 
 
     def cmd_vel_callback(self, msg: Twist):
@@ -318,6 +331,25 @@ class MujocoRosBridge(Node):
     def move_ball_callback(self, msg: Float32):
         if self.ball_actuator_id != -1:
             self.data.ctrl[self.ball_actuator_id] = msg.data
+
+    def randomize_target(self):
+        dx = random.uniform(4.0, 8.0)
+        dy = random.uniform(-3.0, 3.0)
+
+        jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "teleporting_ball_joint")
+        if jid < 0:
+            self.get_logger().debug("Could not find joint 'teleporting_ball_joint'")
+            return
+        
+        p_old = self.data.qpos[self.ball_qpos_id:self.ball_qpos_id + 3].copy()
+        p_new = p_old + np.array([dx, dy, 0.0])
+        self.data.qpos[self.ball_qpos_id:self.ball_qpos_id + 3] = p_new
+        self.data.qvel[self.ball_qvel_id:self.ball_qvel_id + 6] = 0.0 # zero velocity so it teleports
+        mujoco.mj_forward(self.model, self.data)
+
+        self.get_logger().info(
+            f"Target moved to: {p_new[0]:.3f}, {p_new[1]:.3f}, {p_new[2]:.3f}"
+        )
 
     def physics_timer_callback(self):
         """Main loop for physics simulation and high-frequency data."""
@@ -355,10 +387,12 @@ class MujocoRosBridge(Node):
         odom_msg.header.stamp = stamp
         odom_msg.header.frame_id = self.ODOM_FRAME_ID
         odom_msg.child_frame_id = self.BASE_LINK_FRAME_ID
-        odom_msg.pose.pose.position = Point(x=self.data.qpos[0], y=self.data.qpos[1], z=self.data.qpos[2])
-        odom_msg.pose.pose.orientation = Quaternion(w=self.data.qpos[3], x=self.data.qpos[4], y=self.data.qpos[5], z=self.data.qpos[6])
-        odom_msg.twist.twist.linear = Vector3(x=self.data.qvel[0], y=self.data.qvel[1], z=self.data.qvel[2])
-        odom_msg.twist.twist.angular = Vector3(x=self.data.qvel[3], y=self.data.qvel[4], z=self.data.qvel[5])
+        q = self.robot_base_qpos_id
+        v = self.robot_base_qvel_id
+        odom_msg.pose.pose.position = Point(x=self.data.qpos[q + 0], y=self.data.qpos[q + 1], z=self.data.qpos[q + 2])
+        odom_msg.pose.pose.orientation = Quaternion(w=self.data.qpos[q + 3], x=self.data.qpos[q + 4], y=self.data.qpos[q + 5], z=self.data.qpos[q + 6])
+        odom_msg.twist.twist.linear = Vector3(x=self.data.qvel[v + 0], y=self.data.qvel[v + 1], z=self.data.qvel[v + 2])
+        odom_msg.twist.twist.angular = Vector3(x=self.data.qvel[v + 3], y=self.data.qvel[v + 4], z=self.data.qvel[v + 5])
         self.odom_pub.publish(odom_msg)
 
 
