@@ -1,0 +1,29 @@
+<mujoco model="my_robot">
+    <option timestep="0.01" gravity="0 0 -9.81"/>
+    <default>
+        <geom friction="1 0.005 0.0001" />
+    </default>
+
+    <asset>
+        <material name="MatRed" rgba="1 0.1 0.1 1"/>
+    </asset>
+
+    <worldbody>
+        <camera name="third_view" pos="-1.734 -0.009 0.677" xyaxes="-0.001 -1.000 -0.000 0.110 -0.000 0.994"/>
+
+        <light diffuse=".5 .5 .5" pos="0 0 3" dir="0 0 -1"/>
+        <geom name="ground" type="plane" size="25 25 0.1" rgba=".9 .9 .9 1"/>
+
+        <light directional="true" pos="0 0 10" dir="-0.5 0.1 -0.9" diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2" castshadow="true"/>
+
+
+        <body name="teleporting_ball" pos="0 0 0.3">
+            <freejoint name="teleporting_ball_joint"/>
+            <geom type="sphere" size="0.3" material="MatRed" mass="1"/>
+        </body>
+
+
+    </worldbody>
+
+
+</mujoco>
