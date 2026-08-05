@@ -17,7 +17,7 @@
         <light directional="true" pos="0 0 10" dir="-0.5 0.1 -0.9" diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2" castshadow="true"/>
 
 
-        <body name="teleporting_ball" pos="0 0 0.3">
+        <body name="teleporting_ball" pos="6 0 0.3">
             <freejoint name="teleporting_ball_joint"/>
             <geom type="sphere" size="0.3" material="MatRed" mass="1"/>
         </body>

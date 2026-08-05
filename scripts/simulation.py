@@ -47,6 +47,7 @@ class MujocoRosBridge(Node):
     CMD_VEL_TOPIC = '/diff_cont/cmd_vel'
     DIRECT_VEL_UPDATE_TOPIC = '/move/cmd_vel'
     BALL_POS_TOPIC = '/ball_position'
+    TARGET_POS_TOPIC = '/target_position'
     LEFT_ENCODER_TOPIC = '/left_encoder/ticks'
     RIGHT_ENCODER_TOPIC = '/right_encoder/ticks'
 
@@ -88,7 +89,6 @@ class MujocoRosBridge(Node):
             self._get_model_parameters()
             self._setup_mujoco_simulation()
             self._setup_ros_communications()
-            self.randomize_target()
         except Exception as e:
             self._handle_fatal_error(f"Failed to initialize: {e}")
             return
@@ -261,6 +261,9 @@ class MujocoRosBridge(Node):
         self.rendering_timer = self.create_timer(rendering_period, self.rendering_timer_callback)
         if self.camera_sim:
             self.camera_timer = self.create_timer(1.0 / self.camera_hz, self.camera_timer_callback)
+        
+        # ball randomization sub
+        self.ball_randomizer_sub = self.create_subscription(Point, self.TARGET_POS_TOPIC, self._randomize_ball_callback, 10)
 
 
     def _handle_fatal_error(self, message: str):
@@ -332,23 +335,17 @@ class MujocoRosBridge(Node):
         if self.ball_actuator_id != -1:
             self.data.ctrl[self.ball_actuator_id] = msg.data
 
-    def randomize_target(self):
-        dx = random.uniform(4.0, 8.0)
-        dy = random.uniform(-3.0, 3.0)
+    def _randomize_ball_callback(self, msg: Point):
+        self.teleport_target(msg)
 
-        jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, "teleporting_ball_joint")
-        if jid < 0:
-            self.get_logger().debug("Could not find joint 'teleporting_ball_joint'")
-            return
-        
-        p_old = self.data.qpos[self.ball_qpos_id:self.ball_qpos_id + 3].copy()
-        p_new = p_old + np.array([dx, dy, 0.0])
-        self.data.qpos[self.ball_qpos_id:self.ball_qpos_id + 3] = p_new
+    def teleport_target(self, position: Point):
+
+        self.data.qpos[self.ball_qpos_id:self.ball_qpos_id + 3] = np.array([position.x, position.y, position.z])
         self.data.qvel[self.ball_qvel_id:self.ball_qvel_id + 6] = 0.0 # zero velocity so it teleports
         mujoco.mj_forward(self.model, self.data)
 
         self.get_logger().info(
-            f"Target moved to: {p_new[0]:.3f}, {p_new[1]:.3f}, {p_new[2]:.3f}"
+            f"Target moved to: {position.x:.3f}, {position.y:.3f}, {position.z:.3f}"
         )
 
     def physics_timer_callback(self):
