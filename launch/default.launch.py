@@ -8,7 +8,7 @@ from launch_ros.actions import Node
 def generate_launch_description():
     pkg_share = get_package_share_directory('dr_mujoco')
 
-    default_world_path = os.path.join(pkg_share, 'world', 'default.xml')
+    default_world_path = os.path.join(pkg_share, 'world', 'drive_to_x.xml')
     default_robot_path = os.path.join(pkg_share, 'models', 'dummy.xml')
 
     world_arg = DeclareLaunchArgument(
