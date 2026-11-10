@@ -48,6 +48,7 @@ class MujocoRosBridge(Node):
     DIRECT_VEL_UPDATE_TOPIC = '/move/cmd_vel'
     BALL_POS_TOPIC = '/ball_position'
     TARGET_POS_TOPIC = '/target_position'
+    TARGET_CMD_TOPIC = '/cmd_vel/ball'
     LEFT_ENCODER_TOPIC = '/left_encoder/ticks'
     RIGHT_ENCODER_TOPIC = '/right_encoder/ticks'
 
@@ -264,7 +265,7 @@ class MujocoRosBridge(Node):
         
         # ball randomization sub
         self.ball_randomizer_sub = self.create_subscription(Point, self.TARGET_POS_TOPIC, self._randomize_ball_callback, 10)
-
+        self.ball_keyboard_sub = self.create_subscription(Twist, self.TARGET_CMD_TOPIC, self.ball_keyboard_callback, 10)
 
     def _handle_fatal_error(self, message: str):
         """Logs a fatal error and shuts down the node."""
@@ -337,6 +338,19 @@ class MujocoRosBridge(Node):
 
     def _randomize_ball_callback(self, msg: Point):
         self.teleport_target(msg)
+
+    def ball_keyboard_callback(self, msg: Twist):
+        if self.ball_joint_id < 0:
+            return
+
+        dt = 0.1
+
+        position = Point()
+        position.x = self.data.qpos[self.ball_qpos_id] + msg.linear.x * dt
+        position.y = self.data.qpos[self.ball_qpos_id + 1] + msg.linear.y * dt
+        position.z = self.data.qpos[self.ball_qpos_id + 2]
+
+        self.teleport_target(position)
 
     def teleport_target(self, position: Point):
 
