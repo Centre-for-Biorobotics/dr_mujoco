@@ -59,7 +59,6 @@ class MujocoRosBridge(Node):
     CAMERA_FRAME_ID = 'front_camera_frame'
 
     # Names in MuJoCo Model
-    LEFT_WHEEL_GEOM = 'left_wheel_geom'
     LEFT_WHEEL_BODY = 'left_wheel'
     RIGHT_WHEEL_BODY = 'right_wheel'
     FRONT_CAMERA = 'front_camera'
@@ -159,8 +158,7 @@ class MujocoRosBridge(Node):
             self.robot_base_qpos_id = self.model.jnt_qposadr[self.robot_base_joint_id]
             self.robot_base_qvel_id = self.model.jnt_dofadr[self.robot_base_joint_id]
 
-            left_wheel_geom_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, self.LEFT_WHEEL_GEOM)
-            self.wheel_radius = self.model.geom_size[left_wheel_geom_id][0]
+            self.wheel_radius = 0.036
 
             left_wheel_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, self.LEFT_WHEEL_BODY)
             right_wheel_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, self.RIGHT_WHEEL_BODY)
