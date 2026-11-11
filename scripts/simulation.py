@@ -19,7 +19,7 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.time import Time
 from sensor_msgs.msg import Image
-from std_msgs.msg import Float32, Int32 
+from std_msgs.msg import Int32 
 
 
 class MujocoRosBridge(Node):
@@ -46,9 +46,8 @@ class MujocoRosBridge(Node):
     IMAGE_TOPIC = '/camera1/image_raw'
     CMD_VEL_TOPIC = '/diff_cont/cmd_vel'
     DIRECT_VEL_UPDATE_TOPIC = '/move/cmd_vel'
-    BALL_POS_TOPIC = '/ball_position'
-    TARGET_POS_TOPIC = '/target_position'
-    TARGET_CMD_TOPIC = '/cmd_vel/ball'
+    TARGET_POS_CMD_TOPIC = '/cmd_pos/ball'
+    TARGET_VEL_CMD_TOPIC = '/cmd_vel/ball'
     LEFT_ENCODER_TOPIC = '/left_encoder/ticks'
     RIGHT_ENCODER_TOPIC = '/right_encoder/ticks'
 
@@ -62,12 +61,11 @@ class MujocoRosBridge(Node):
     LEFT_WHEEL_BODY = 'left_wheel'
     RIGHT_WHEEL_BODY = 'right_wheel'
     FRONT_CAMERA = 'front_camera'
-    BALL_ACTUATOR = 'ball_actuator'
     LEFT_WHEEL_JOINT = 'base_to_left_wheel'
     RIGHT_WHEEL_JOINT = 'base_to_right_wheel'
     LEFT_WHEEL_ACTUATOR = 'left_wheel_vel'
     RIGHT_WHEEL_ACTUATOR = 'right_wheel_vel'
-    BALL_JOINT = 'teleporting_ball_joint'
+    BALL_JOINT = 'target_ball_joint'
     ROBOT_BASE_JOINT = 'my_robot'
 
     # Simulation Settings
@@ -192,7 +190,6 @@ class MujocoRosBridge(Node):
         """Sets up the MuJoCo viewer and renderer."""
         self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
         self.renderer = mujoco.Renderer(self.model, self.IMG_HEIGHT, self.IMG_WIDTH)
-        self.ball_actuator_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, self.BALL_ACTUATOR)
 
         if self.show_frames:
             kind_map = {
@@ -220,7 +217,6 @@ class MujocoRosBridge(Node):
                     self.model.geom_rgba[gid, 3] = self.robot_alpha
 
         try:
-            self.ball_actuator_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, self.BALL_ACTUATOR)
             self.left_wheel_actuator_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, self.LEFT_WHEEL_ACTUATOR)
             self.right_wheel_actuator_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, self.RIGHT_WHEEL_ACTUATOR)
 
@@ -229,8 +225,6 @@ class MujocoRosBridge(Node):
 
             self.get_logger().info(f"Found left wheel actuator with ID: {self.left_wheel_actuator_id}")
             self.get_logger().info(f"Found right wheel actuator with ID: {self.right_wheel_actuator_id}")
-            if self.ball_actuator_id != -1:
-                self.get_logger().info(f"Found ball actuator with ID: {self.ball_actuator_id}")
         except ValueError as e:
             self.get_logger().warn(f"Could not find required actuators: {e}. Check actuator names in your XML and the script.")
 
@@ -243,7 +237,6 @@ class MujocoRosBridge(Node):
         self.image_pub = self.create_publisher(Image, self.IMAGE_TOPIC, 10)
         self.cmd_vel_sub = self.create_subscription(Twist, self.CMD_VEL_TOPIC, self.cmd_vel_callback, 10)
         self.direct_vel_sub = self.create_subscription(Twist, self.DIRECT_VEL_UPDATE_TOPIC, self.direct_cmd_vel_callback, 10)
-        self.ball_pos_sub = self.create_subscription(Float32, self.BALL_POS_TOPIC, self.move_ball_callback, 10)
 
         # Encoder publishers
         self.left_encoder_pub = self.create_publisher(Int32, self.LEFT_ENCODER_TOPIC, 10)
@@ -262,8 +255,8 @@ class MujocoRosBridge(Node):
             self.camera_timer = self.create_timer(1.0 / self.camera_hz, self.camera_timer_callback)
         
         # ball randomization sub
-        self.ball_randomizer_sub = self.create_subscription(Point, self.TARGET_POS_TOPIC, self._randomize_ball_callback, 10)
-        self.ball_keyboard_sub = self.create_subscription(Twist, self.TARGET_CMD_TOPIC, self.ball_keyboard_callback, 10)
+        self.ball_pos_sub = self.create_subscription(Point, self.TARGET_POS_CMD_TOPIC, self.ball_pos_callback, 10)
+        self.ball_vel_sub = self.create_subscription(Twist, self.TARGET_VEL_CMD_TOPIC, self.ball_vel_callback, 10)
 
     def _handle_fatal_error(self, message: str):
         """Logs a fatal error and shuts down the node."""
@@ -330,14 +323,10 @@ class MujocoRosBridge(Node):
             self.get_logger().warn_once("Wheel actuators not found, cannot apply cmd_vel.")
             self.get_logger().warn_once("Check actuator names in your XML and the script.")
 
-    def move_ball_callback(self, msg: Float32):
-        if self.ball_actuator_id != -1:
-            self.data.ctrl[self.ball_actuator_id] = msg.data
-
-    def _randomize_ball_callback(self, msg: Point):
+    def ball_pos_callback(self, msg: Point):
         self.teleport_target(msg)
 
-    def ball_keyboard_callback(self, msg: Twist):
+    def ball_vel_callback(self, msg: Twist):
         if self.ball_joint_id < 0:
             return
 

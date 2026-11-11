@@ -36,7 +36,6 @@ install(DIRECTORY
 
 install(PROGRAMS
   scripts/simulation.py
-  scripts/ball_mover.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

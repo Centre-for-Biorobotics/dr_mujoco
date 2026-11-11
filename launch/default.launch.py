@@ -23,16 +23,10 @@ def generate_launch_description():
         description='Path to the MuJoCo XML robot file'
     )
 
-    show_frames_arg = DeclareLaunchArgument(
-        'show_frames',
-        default_value='false',
-        description='Whether to show coordinate frames in the simulation'
-    )
-
-    alpha_arg = DeclareLaunchArgument(
-        'robot_alpha',
-        default_value='1.0',
-        description='Alpha transparency for the robot model (0.0 to 1.0)'
+    camera_hz_arg = DeclareLaunchArgument(
+        'camera_hz',
+        default_value='10.0',
+        description='Camera update frequency in Hz'
     )
 
     mujoco_ros_bridge_node = Node(
@@ -43,15 +37,14 @@ def generate_launch_description():
         parameters=[{
             'world_path': LaunchConfiguration('world'),
             'robot_path': LaunchConfiguration('robot'),
-            'show_frames': LaunchConfiguration('show_frames'),
-            'robot_alpha': LaunchConfiguration('robot_alpha')
+            'camera_hz': LaunchConfiguration('camera_hz'),
+            'camera_sim': True
         }]
     )
 
     return LaunchDescription([
         world_arg,
         robot_arg,
-        show_frames_arg,
-        alpha_arg,
-        mujoco_ros_bridge_node
+        camera_hz_arg,
+        mujoco_ros_bridge_node,
     ])
